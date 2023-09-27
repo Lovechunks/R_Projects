@@ -1,0 +1,256 @@
+---
+title: "MATH 1307 - Asignment 1"
+author: "Galen Herten-Crabb 3955778"
+date: "25/08/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Required Libraries
+library(dLagM)
+library(forecast)
+library(tseries)
+#Clear R memory and set working directory
+rm(list = ls())
+setwd("/Users/Galan/Desktop/Uni/Masters/Forecasting")
+```
+
+## Introduction
+
+The purpose of this report is to analyse and model the monthly averages of the ASX All Ordinaries Price Index, beginning in January of 2004, in conjunction with three other independent commodity price indices, namely Gold, Oil, and Copper.
+
+This report will discuss the presence of non-stationarity in the series and the impact of different time series components on the data. Lastly, accurate modelling and forecasting of the series will be attempted using distributed lag models.
+
+To achieve the goals outlined above the R programming language and several of its statistical libraries shall be leveraged to plot, analyse, and provide diagnostic information on models created for this project. A special mention is warranted for the dLagM library that will facilitate the fitting and testing of distributed lag models on these data as the series contains more than one predictor (x) lag, in this case three.
+
+
+
+```{r}
+#reads in data set, excel sheet had to be slightly adjusted due to some formatting in the file.
+asx_data = read.csv("ASX_data.csv") 
+summary(asx_data)
+```
+
+## Method
+
+Testing for non-stationarity in the data and impact of time series components.
+
+The first step in analysing these data is to test for non-stationarity. A custom function named ‘Plots’ is created to assist in the initial visualisation of the series and includes a basic plot of the individual price index along with an ACF and PACF plot. These visuals allow the observer to check for obvious signs of non-stationarity such as trend and seasonality. Other time series components, such as changing variance, autoregressive behaviour, and change points (a time point where the behaviour of the series suddenly changes) can also be identified.
+
+To discover the most accurate and suitable distributed lag model for the ASX price index two different model types shall be attempted that can specifically handle series with multiple independent predictors. These are the Finite DLM function and Autoregressive DLM function, both found in the dLagM library. 
+
+In both models the optimal lag (value of q) must be revealed. To maximise goodness of fit a max value of q is selected and the optimal parameter is identified as the one which minimises the AIC and BIC errors. Happily this can be done automatically with dLagM’s finiteDLMauto function, however discovering optimal values of independent lags is trickier and will be discussed later in this report.  
+
+
+```{r}
+#Create functions for analysis
+Plots <- function(ts, title) {
+  plot(ts, ylab = sprintf("%s", title), xlab = "Time", main = sprintf("Plot of %s time series", title))
+  acf(ts, main = sprintf("acf of %s time series", title))
+  pacf(ts, main = sprintf("pacf of %s time series", title))
+  
+}
+Stationarity <- function(ts) {
+print(adf.test(ts))#Assumes data are non-stationary
+print(kpss.test(ts))#Assumes data are stationary
+print(pp.test(ts))#Assumes data are non-stationary
+  
+}
+```
+
+## Results
+
+The following code chunk and output converts each column of data into a time series object for further analysis and plots the data together so each series can be compared over time.As this data is monthly the frequency of the time series object is set to 12. 
+
+The black line is the ASX Ordinaries data, this is our dependent series. Red, green, and blue are the independents and are for Gold, Oil, and Copper respectively. 
+
+Initial observations show obvious trends in all series barring copper. There is possibly some seasonality in the ASX and Gold prices, but it is not immediately clear. There does not appear to be any significant change point in the series but there does appear to be some correlation between the Gold and ASX data which may cause issues in regards to multi-collinearity, but much like the other points mentioned this can be detected and compensated for later in the modeling stage.
+
+```{r}
+#Convert set and each column into ts objects for analysis
+asx = ts(asx_data$ASX.price, start = 1, frequency = 12)
+gold = ts(asx_data$Gold.price, start = 1, frequency = 12)
+oil = ts(asx_data$Crude.Oil..Brent._USD.bbl, start = 1, frequency = 12)
+copper = ts(asx_data$Copper_USD.tonne, start = 1, frequency = 12)
+
+data.ts = ts(asx_data[, 1:4], start = 1, frequency = 12)
+
+#Plot data together
+plot(data.ts, plot.type="s", col=c("black", "red", "green", "blue"), main = "ASX price and commodities")
+```
+
+These next chunks plot each series independently and chart ACF and PACF plots to assist in determining time series component effects and ultimately determine non-stationarity. 
+
+The below are plots for the ASX price index in isolation. The first charts the data as is, and a clear trend is visible but no seasonality. ACF of ASX data confirms the trend with decaying pattern in significant lags, no seasonality detected. PACF shows one significant lag indicating series is non-random. 
+
+The below are plots for the ASX price index in isolation. The first charts the data as is, and a clear trend is visible but no seasonality. ACF of ASX data confirms the trend with decaying pattern in significant lags, no seasonality detected. PACF shows one significant lag indicating series is non-random and autocorrelated.
+
+```{r}
+Plots(asx, 'ASX Price')
+```
+The same plots are generated for the Gold price index. The data demonstrates a strong upward trend and no obvious seasonality. ACF confirms trend with geometric decay in the significances while PACF shows only one significant lag suggesting non-randomness and autocorrelation.
+
+```{r}
+Plots(gold, "Gold Price")
+```
+Oil data appears more dynamic than the previous series with a sharp rise and fall between time points 4 & 6 possibly indicating a change point in the data or a change in variance. Overall, the plot suggests a strong upward trend with no seasonality. ACF is consistent with other data in this set having a geometric decay in significance confirming trend but no seasonality. PACF shows two significances at 0.1 and 0.2 suggesting non-randomness and autocorrelation.
+
+```{r}
+Plots(oil, 'Crude Oil Price')
+```
+The plot for the Copper price index shares the dynamics of the Oil index with a possible change point at the exact same time point, this does not hide the trend in the series however. Nor does it suggest any seasonality, it may suggest changing variance though. ACF shows the same behaviour as ACF plots of the previous data, that of a decaying geometric pattern confirming the presence of trend in the series, but no seasonality is detected. PACF shows two significant lags also suggesting non-randomness and autocorrelation.   
+
+```{r}
+Plots(copper, "Copper Price")
+```
+
+These next chunks use the statistical tests discussed in the method to confirm non-stationarity in each series.As trend was detected in all data, non-stationarity is to be expected. These following tests should all confirm non-stationarity.
+
+ASX series returns insufficient p values in both ADF and PP tests to reject their null hypothesises. KPPS test did return a significant p value meaning that all three tests confirm the presence of non-stationarity.
+```{r}
+Stationarity(asx)
+```
+Gold returns similar results to ASX, failing to reject ADF and PP null hypothesises while rejecting KPSS. Non-stationarity confirmed.
+
+```{r}
+Stationarity(gold)
+```
+Oil data is the same as above. Fails to reject null hypothesis in ADF and PP tests, but rejects KPSS. Non-stationarity is confirmed.    
+
+```{r}
+Stationarity(oil)
+```
+Copper returns a failure to reject null hypothesises of both ADF and PP tests while rejecting KPSS assumptions. Non-stationarity confirmed.
+
+```{r}
+Stationarity(copper)
+```
+
+
+Both the assessment of plots and statistical tests confirm the presence of non-stationarity in the series. To address this before model fitting, differencing or transformation is required. The following code performs the required procedure and tests the results using an ADF test.
+
+The initial plot of the whole data series looks promising in regards to achieving stationarity at a difference of 1.
+
+```{r}
+#Transformation/Differencing
+data.diff=diff(data.ts, differences = 1)
+plot(data.diff, ylab='ASX Price', xlab='Months', type='o', main='Time series plot of the first difference of ASX Price Series' )
+```
+
+Further tests are performed on each series seperately, once they have been differenced, to confirm stationarity.
+
+All data returns sufficient p values to reject the null hypothesis, stationarity can be assumed and the whole data can be difference this way and modeled.
+```{r}
+#Testing differenced data for stationarity, first step is to difference each series, then apply tests
+asx.diff=diff(asx, differences = 1)
+gold.diff=diff(gold, differences = 1)
+oil.diff=diff(oil, differences = 1)
+copper.diff=diff(copper, differences = 1)
+#tests
+adf.test(asx.diff)
+adf.test(gold.diff)
+adf.test(oil.diff)
+adf.test(copper.diff)
+```
+
+Modeling begins by determining the optimal value of q (optimal lag) using the finiteDLMauto function.
+
+The tables produced rank the AIC and BIC scores respectively with the smallest values i.e. the values indicating optimal lag, at the top. For this test maximum q value is set at 12.
+
+The tables indicate that the model where q=12 minimises both AIC and BIC values indicating that it is optimal. 
+```{r}
+#Converting data.diff to data frame for auto DLM
+data.diff.df<-data.frame(data.diff)
+
+
+#Modeling to detect optimal value of q
+
+finiteDLMauto(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = data.diff.df, q.min = 1, q.max = 12,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+
+finiteDLMauto(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = data.diff.df, q.min = 1, q.max = 12,
+              model.type = "dlm", error.type = "BIC", trace = TRUE)
+```
+Summary of model 1 returns several insignificant coefficients but some quite significant ones also. A middling to low R square score and a highly significant p value suggesting an appropriate fit with little collinearity. 
+
+```{r}
+#DLM Model
+dlmodel1<- dlm(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = data.diff.df , q = 12)
+summary(dlmodel1)
+
+```
+Standardised residual plot appears to have a stable mean around zero, which is desirable. The ACF does not suggest any highly significant lags, there is one slightly significant lag at around 22 however, but perhaps insufficient to suggest significant serial correlation. The Breusch-Godfrey test also suggests a low level of serial correlation but not enough to reject the null hypothesis. A histogram of standardised residuals a slightly skewed but otherwise suggests a distribution that is random.
+
+```{r}
+checkresiduals(dlmodel1$model)
+```
+
+Specification of orders for Autoregressive DLM, ardlBoundOrders function (Demirhan, H. (2020)) selects optimal values of q and p for the entire series and can provide a minimum AIC statistic. In this case the AIC is lower than the first model so testing an Autoregressive model appears promising.
+```{r}
+#Search for optimal parameters
+
+formula<-ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne
+
+
+orders<- ardlBoundOrders(data = data.diff.df, formula = formula, ic = 'AIC', max.p = 12, max.q = 12, FullSearch = TRUE)
+
+orders$p; orders$q; orders$min.Stat
+```
+Fitting and assessing possible ARDL models
+```{r}
+ARDLmodel1 <- ardlDlm(formula = formula, data = data.diff.df, p = 1, q = 2)
+ARDLmodel2 <- ardlDlm(formula = formula, data = data.diff.df, p = 3, q = 2)
+ARDLmodel3 <- ardlDlm(formula = formula, data = data.diff.df, p = 12, q = 2)
+
+```
+The first ARDL model many significant coefficients, a low R Square score and a highly significant p value of p=0.00001802
+
+
+```{r}
+summary(ARDLmodel1)
+```
+Model 2 much fewer significant coefficients, slightly higher R Square score and a significant p value of p=0.00006177, which was still higher than model 1
+
+```{r}
+summary(ARDLmodel2)
+```
+Model 3 has the least significant coefficients of the ARDL models and returned an R Square score similar to the Finite model earlier. The p value remained significant at p=0.0005604
+
+```{r}
+summary(ARDLmodel3)
+```
+ Model 1 standardised residuals plot’s mean hovers around zero, the ACF reports only one significant lag and the histogram does largely conform to normalcy barring a slight blow out in the middle.
+```{r}
+checkresiduals(ARDLmodel1$model)
+```
+Model 2’s residual plots were also where one would want them. Data plot with a mean around zero, only one significance in the ACF and an almost normal histogram, slightly better than model 1
+```{r}
+checkresiduals(ARDLmodel2$model)
+```
+Model 3 plots a similar story in regards to the data mean. No significances in the ACF and another almost normal distribution in the histogram. 
+```{r}
+checkresiduals(ARDLmodel3$model)
+```
+
+
+## Discussion
+
+Key findings from this report include clear evidence of non-stationarity in the data set which required differencing of the first order to correct. No seasonality was found and other component factors of time series, such as changing variance or change points, were conclusively discovered either.
+
+Utilising the tools found in the dLagM library optimal parameter values were discovered for use in both a finite distributed lag model and autoregressive distributed lag model. The finite model produced an optimal at q=12 while the autoregressive peaked at q=2, with p=1, 3, and 12.
+
+Assessment of finite DLM revealed mostly desirable outcomes in both standardised residual plots and statistical tests. The plot of residuals had a stable mean, hovering around zero. Almost no significant lags in the ACF and a histogram closely resembling normality, all these observations being in line with expectations. The model perhaps underperformed in providing the significant coefficients one would like to see in a successful model but did display a highly significant p value with a middling R square score.
+
+The second modelling attempt used an autoregressive approach. The dLagM library also has automated tools for discerning optimal parameters for this model as well and the ‘full search’ option was used to test all possible iterations of parameters to come up with an optimal solution for these data. Three distinct values of p were found for all the different series, including the dependant, and each was fitted and assessed.
+
+Three models were fitted and ARDLmodel1 was chosen as the best for this project. It as the most significant coefficients, the lowest R Square and the most significant p value of all models trialled. It’s residuals, while very similar to its counterparts conformed slightly better to expectations and so final forecasting should be performed with this model.
+
+
+## Conclusion
+
+Throughout this project non-stationarity was confirmed andthe impact of time series components were identified, discussed and mitigated. Model selection occured after extensive parameter searches were applied using tools found in the dLagM library, after which fitting and assessment was performed. The conclusion of this inquiry is that the best possible distributed lag model for the data provided is an autoregressive distributed lag model with p=1 and q=2 once one degree of differencing has been performed.
+
+## References
+Demirhan, H. (2020). dLagM: An R package for distributed lag models and ARDL bounds testing. PLoS One, 15(2), e0228812.
